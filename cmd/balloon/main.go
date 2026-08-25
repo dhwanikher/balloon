@@ -8,10 +8,15 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
+	"time"
 
+	"github.com/dhwanikher/balloon/internal/api"
+	"github.com/dhwanikher/balloon/web"
+
+	"github.com/dhwanikher/balloon/internal/demo"
 	"github.com/dhwanikher/balloon/internal/dimension"
-	"github.com/dhwanikher/balloon/internal/layout"
 	"github.com/dhwanikher/balloon/internal/model"
 	"github.com/dhwanikher/balloon/internal/render"
 )
@@ -23,10 +28,12 @@ usage:
   balloon demo [-o out.svg]       render a synthetic ballooned drawing
   balloon build -i texts.json [-o out.svg]
                                   run the pipeline over extracted PDF text
+  balloon serve [-addr :8080]     open the drawing editor in a browser
 
 examples:
   balloon parse '4X ⌀12.50 ±0.05' '25 H7' '⌖|⌀0.2Ⓜ|A|B|C'
   balloon demo -o demo.svg
+  balloon serve
 `
 
 func main() {
@@ -43,6 +50,8 @@ func main() {
 		err = cmdDemo(os.Args[2:])
 	case "build":
 		err = cmdBuild(os.Args[2:])
+	case "serve":
+		err = cmdServe(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return
@@ -79,7 +88,7 @@ func cmdDemo(args []string) error {
 		return err
 	}
 
-	d, texts := demoDrawing()
+	d, texts := demo.Drawing()
 	model.Build(d, texts)
 
 	f, err := os.Create(*outPath)
@@ -143,6 +152,22 @@ func cmdBuild(args []string) error {
 	return nil
 }
 
+func cmdServe(args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	addr := fs.String("addr", ":8080", "listen address")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	srv := &http.Server{
+		Addr:              *addr,
+		Handler:           api.New(web.FS),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	fmt.Fprintf(os.Stderr, "balloon: http://localhost%s\n", *addr)
+	return srv.ListenAndServe()
+}
+
 // report prints a short summary to stderr so the command is useful when its
 // stdout is being redirected.
 func report(d *model.Drawing, outPath string) {
@@ -163,62 +188,4 @@ func report(d *model.Drawing, outPath string) {
 			fmt.Fprintln(os.Stderr, "  -", s)
 		}
 	}
-}
-
-// demoDrawing builds a synthetic part drawing that exercises most of the parser
-// and puts enough callouts near each other to make the solver work for its
-// placements. It takes no input files so `balloon demo` runs on a fresh clone.
-func demoDrawing() (*model.Drawing, []model.TextItem) {
-	const w, h = 842, 595
-
-	d := &model.Drawing{
-		ID:         "demo",
-		Name:       "Bracket, Mounting",
-		PartNumber: "DWG-1042",
-		Revision:   "C",
-		Options:    dimension.DefaultOptions(),
-		Pages: []model.Page{{
-			Index: 0, Width: w, Height: h,
-			Obstacles: []layout.Rect{
-				{X: 250, Y: 150, W: 330, H: 240}, // the part view itself
-				{X: 560, Y: 470, W: 270, H: 115}, // title block
-			},
-		}},
-	}
-
-	callouts := []struct {
-		text string
-		x, y float64
-	}{
-		{"4X ⌀12.50 ±0.05", 120, 120},
-		{"⌀25.00 +0.05/-0.02", 120, 180},
-		{"R8.0", 120, 240},
-		{"60.00 MAX", 120, 300},
-		{"25 H7", 120, 360},
-		{"M6x1.0-6H", 120, 420},
-		{"2 X 45°", 640, 120},
-		{"Ra 1.6", 640, 180},
-		{"120.45-120.55", 620, 240},
-		{"⌖|⌀0.2Ⓜ|A|B|C", 620, 300},
-		{"⊥ 0.05 A", 640, 360},
-		{"(85.00)", 640, 420},
-		{"[42.00]", 300, 430},
-		{"15.000", 380, 430},
-		{"90°±0.5°", 460, 430},
-		{"SEE NOTE 3", 300, 100},
-	}
-
-	texts := make([]model.TextItem, 0, len(callouts))
-	for _, c := range callouts {
-		texts = append(texts, model.TextItem{
-			Text: c.text,
-			Page: 0,
-			Box: layout.Rect{
-				X: c.x, Y: c.y,
-				W: float64(len([]rune(c.text))) * 5.2,
-				H: 10,
-			},
-		})
-	}
-	return d, texts
 }

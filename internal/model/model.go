@@ -33,6 +33,14 @@ type Item struct {
 	Source TextItem                 `json:"source"`
 	Char   dimension.Characteristic `json:"characteristic"`
 
+	// Requirement, LimitsText and Designator are derived from Char. They are
+	// carried on the item so the browser can render a table without
+	// reimplementing the formatting rules, and so the values it posts back are
+	// the ones a human actually saw.
+	Requirement string `json:"requirement"`
+	LimitsText  string `json:"limits"`
+	Designator  string `json:"designator"`
+
 	Balloon layout.Circle  `json:"balloon"`
 	Leader  layout.Segment `json:"leader"`
 	Clean   bool           `json:"clean"`
@@ -104,12 +112,15 @@ func Build(d *Drawing, texts []TextItem) {
 			}
 			id := fmt.Sprintf("p%d-%d", page.Index, next)
 			pageItems = append(pageItems, Item{
-				ID:      id,
-				Number:  next,
-				Page:    page.Index,
-				Include: c.Inspectable(),
-				Source:  t,
-				Char:    c,
+				ID:          id,
+				Number:      next,
+				Page:        page.Index,
+				Include:     c.Inspectable(),
+				Source:      t,
+				Char:        c,
+				Requirement: c.Requirement(),
+				LimitsText:  c.Limits(),
+				Designator:  c.Designator(),
 			})
 			anchors = append(anchors, layout.Anchor{
 				ID:     id,

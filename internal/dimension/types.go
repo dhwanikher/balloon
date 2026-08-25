@@ -108,6 +108,12 @@ type Characteristic struct {
 	LowerLimit float64 `json:"lower_limit"`
 	HasLimits  bool    `json:"has_limits"`
 
+	// ChamferAngle is the angle of a chamfer callout such as "2 X 45", in
+	// degrees. The nominal carries the leg length.
+	ChamferAngle float64 `json:"chamfer_angle,omitempty"`
+	// FinishLabel is the roughness parameter as written: Ra, Rz or Rq.
+	FinishLabel string `json:"finish_label,omitempty"`
+
 	Thread *Thread              `json:"thread,omitempty"`
 	Fit    *Fit                 `json:"fit,omitempty"`
 	GDT    *FeatureControlFrame `json:"gdt,omitempty"`

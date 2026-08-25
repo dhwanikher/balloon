@@ -2,7 +2,7 @@ BIN     := bin/balloon
 PKG     := ./cmd/balloon
 GOFILES := $(shell find . -name '*.go' -not -path './web/*')
 
-.PHONY: all build test cover vet fmt demo clean
+.PHONY: all build test cover vet fmt demo serve clean
 
 all: fmt vet test build
 
@@ -27,6 +27,9 @@ fmt:
 # Regenerates the picture in the README.
 demo: $(BIN)
 	./$(BIN) demo -o docs/demo.svg
+
+serve: $(BIN)
+	./$(BIN) serve
 
 clean:
 	rm -rf bin coverage.out

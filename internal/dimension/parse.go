@@ -117,7 +117,7 @@ func Parse(raw string, opt Options) Characteristic {
 		return finish(&c, opt)
 	case parseRoughness(&c, s):
 		return finish(&c, opt)
-	case parseChamfer(&c, s):
+	case parseChamfer(&c, s, opt):
 		return finish(&c, opt)
 	}
 
@@ -271,11 +271,7 @@ func defaultTolerance(literal string, c *Characteristic, opt Options) (float64, 
 		}
 		return 0, false
 	}
-	places := 0
-	if i := strings.IndexByte(literal, '.'); i >= 0 {
-		places = len(literal) - i - 1
-	}
-	t, ok := opt.DefaultTolerances[places]
+	t, ok := opt.DefaultTolerances[decimals(literal)]
 	return t, ok
 }
 
@@ -335,11 +331,13 @@ func parseRoughness(c *Characteristic, s string) bool {
 	c.Unit = UnitMicron
 	c.TolType = TolMax // roughness callouts are upper bounds
 	c.UpperLimit, c.HasLimits = v, true
-	c.Modifiers = append(c.Modifiers, strings.ToUpper(m[1]))
+	// Keep the parameter as the standard writes it (Ra, not RA): the report
+	// echoes the drawing, and "RA" is not a thing.
+	c.FinishLabel = strings.ToUpper(m[1][:1]) + strings.ToLower(m[1][1:])
 	return true
 }
 
-func parseChamfer(c *Characteristic, s string) bool {
+func parseChamfer(c *Characteristic, s string, opt Options) bool {
 	m := chamferRe.FindStringSubmatch(s)
 	if m == nil {
 		return false
@@ -350,8 +348,25 @@ func parseChamfer(c *Characteristic, s string) bool {
 		return false
 	}
 	c.Kind, c.Nominal, c.HasNominal = KindChamfer, leg, true
-	c.Modifiers = append(c.Modifiers, "ANGLE "+strconv.FormatFloat(ang, 'g', -1, 64)+symDegree)
+	c.ChamferAngle = ang
+
+	// The leg is a measured length, so it inherits the title block default the
+	// same way any other untoleranced dimension does. Without this the chamfer
+	// reaches the report with no acceptance limits for the inspector to use.
+	if t, ok := opt.DefaultTolerances[decimals(m[1])]; ok {
+		c.TolType = TolNone
+		c.Upper, c.Lower = t, -t
+		c.LowerLimit, c.UpperLimit, c.HasLimits = leg-t, leg+t, true
+	}
 	return true
+}
+
+// decimals counts the digits after the decimal point in a numeric literal.
+func decimals(literal string) int {
+	if i := strings.IndexByte(literal, '.'); i >= 0 {
+		return len(literal) - i - 1
+	}
+	return 0
 }
 
 // finish applies invariants that hold regardless of which branch parsed the

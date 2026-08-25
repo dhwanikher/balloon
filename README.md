@@ -9,17 +9,34 @@ on every dimension, and retypes each one into a spreadsheet. Then the customer
 issues revision D and they do it again.
 
 This does the mechanical parts: read the callouts, work out what each one
-actually tolerances, number them in reading order, and place the balloons.
+actually tolerances, number them in reading order, place the balloons, and write
+the AS9102 form.
 
-![A ballooned drawing](docs/demo.svg)
+![The editor](docs/screenshot.jpg)
 
+Open a drawing PDF, drag balloons that landed badly, tick off what doesn't need
+inspecting, export. The PDF never leaves the machine — pdf.js parses it in the
+browser and only the extracted text runs are sent to the local server.
+
+## Quick start
+
+```bash
+go build -o bin/balloon ./cmd/balloon
+./bin/balloon serve          # then open http://localhost:8080
 ```
-$ balloon demo -o demo.svg
-demo.svg: 15 characteristics, 13 inspectable, 0 need attention
 
-warnings:
-  - balloon 9: tolerance for H7 computed from ISO 286 formulas; verify against
-    the standard before acceptance
+That's the whole install. pdf.js is vendored, so there is no npm, no build step
+and no network access at runtime — one Go binary with the frontend embedded.
+
+No drawing to hand? Click **Load the demo part**.
+
+There's a CLI too, for driving the engine without a browser:
+
+```bash
+./bin/balloon parse '4X ⌀12.50 ±0.05' '25 H7' '⌖|⌀0.2Ⓜ|A|B|C'
+./bin/balloon demo -o demo.svg          # render a ballooned drawing
+./bin/balloon demo -o demo.svg -debug   # show text boxes and obstacle regions
+go test ./...
 ```
 
 ## The interesting parts
@@ -29,6 +46,11 @@ warnings:
 GD&T symbols often arrive as bare ASCII letters, because the drawing used a
 symbol font and the PDF text layer kept the character codes rather than the
 glyphs — so a position symbol reaches you as the letter `j`.
+
+**PDF text layers split callouts apart.** `⌀12.50` and ` ±0.05` almost always
+arrive as separate runs. Hand those halves to a parser separately and you get
+two useless characteristics instead of one correct one, so runs sharing a
+baseline with only a small gap between them are stitched back together first.
 
 **A dimension with no tolerance is not untoleranced.** `12.50` inherits from the
 title block, and *which* default depends on how many decimal places were typed.
@@ -54,45 +76,37 @@ the solver scores candidate positions and takes the least-bad arrangement —
 weighting a balloon collision far above a long leader, because an unreadable
 number is worse than an ugly one. When there is genuinely no clean answer it
 still returns a position and says what's wrong with it, rather than failing or
-quietly overlapping.
+quietly overlapping. Those balloons are tinted amber so a human knows to drag
+them.
 
 Placement is deterministic, so re-running against a revised drawing shows a
 reviewer only the balloons that actually moved.
 
-## Try it
+**Warnings reach the sheet, not just the screen.** Anything the pipeline could
+not fully resolve is printed on the exported workbook under "Review before
+sign-off". A warning that lives only in the UI is one the person signing the
+report never sees.
 
-```bash
-go build -o bin/balloon ./cmd/balloon
+## What it produces
 
-# parse callouts straight from the terminal
-./bin/balloon parse '4X ⌀12.50 ±0.05' '25 H7' '⌖|⌀0.2Ⓜ|A|B|C'
+An AS9102 Form 3 — *Characteristic Accountability, Verification and
+Compatibility Evaluation* — with the Results column left empty for the
+inspector:
 
-# render a synthetic ballooned drawing, no input files needed
-./bin/balloon demo -o demo.svg
-./bin/balloon demo -o demo.svg -debug   # show text boxes and obstacle regions
-
-go test ./...
+```
+Char. │ Ref.    │ Desig. │ Requirement          │ Acceptance Limits │ Results
+──────┼─────────┼────────┼──────────────────────┼───────────────────┼────────
+  1   │ Sheet 1 │        │ 4X ⌀12.5 ±0.05       │ 12.45 / 12.55     │
+  2   │ Sheet 1 │        │ 2 X 45°              │ 1.5 / 2.5         │
+  4   │ Sheet 1 │        │ Ra 1.6 max           │ ≤ 1.6             │
+  8   │ Sheet 1 │ GD&T   │ position ⌀0.2 (MMC)  │                   │
+  9   │ Sheet 1 │        │ 25 H7                │ 25 / 25.021       │
 ```
 
-`balloon parse '25 H7'`:
-
-```json
-{
-  "raw": "25 H7",
-  "kind": "linear",
-  "nominal": 25,
-  "unit": "mm",
-  "tol_type": "fit",
-  "upper": 0.021,
-  "lower": 0,
-  "upper_limit": 25.021,
-  "lower_limit": 25,
-  "fit": { "Deviation": "H", "Grade": 7, "IsHole": true },
-  "warnings": [
-    "tolerance for H7 computed from ISO 286 formulas; verify against the standard before acceptance"
-  ]
-}
-```
+Requirements echo the drawing's own notation rather than a normalised rewrite,
+because a customer comparing the report against the print needs to recognise
+each row at a glance. Reference and basic dimensions get a balloon but no row —
+they're on the drawing, they're just not measured directly.
 
 ## Layout
 
@@ -100,32 +114,19 @@ go test ./...
 internal/dimension/   callout grammar — symbols, tolerances, threads, ISO fits, GD&T
 internal/layout/      balloon placement solver and the geometry it needs
 internal/model/       the pipeline: text in, numbered inspection sheet out
+internal/export/      AS9102 Form 3 as XLSX
 internal/render/      SVG output
-cmd/balloon/          CLI
+internal/api/         HTTP handlers, stateless
+internal/demo/        the synthetic fixture both the CLI and the browser use
+web/                  frontend (vanilla JS + vendored pdf.js), embedded in the binary
+cmd/balloon/          CLI: parse, demo, build, serve
 ```
 
-`internal/dimension` and `internal/layout` have no dependencies on anything else
-in the project, including each other. The pipeline is the only thing that knows
-both exist.
-
-## Status
-
-Built and tested:
-
-- callout parser (symmetric, bilateral, limits, MAX/MIN, basic, reference,
-  ISO fits, title-block defaults, threads, chamfers, roughness, GD&T frames)
-- balloon placement solver
-- reading-order numbering
-- SVG render
-- CLI
-
-Not built yet:
-
-- **PDF ingest.** The pipeline takes text items with coordinates; nothing
-  produces them from a real PDF yet. That's the browser frontend's job — PDF.js
-  renders the page and hands back positioned text.
-- **The editor.** Click to place, drag to adjust, edit a characteristic.
-- **AS9102 export.** The XLSX the whole thing is ultimately for.
+`internal/dimension` and `internal/layout` depend on nothing else in the
+project, including each other. The pipeline is the only thing that knows both
+exist. The server is stateless — the browser holds the drawing and posts it back
+for each operation, so there's no database and nothing left behind when you
+close it.
 
 ## Known limitations
 
@@ -136,6 +137,14 @@ Not built yet:
 - The prose filter is a vocabulary allowlist. It will drop a legitimate callout
   containing an unusual abbreviation, which is the safer direction to fail but
   is still a failure.
-- Leader lines currently terminate at the centre of the callout's text box. On a
-  real drawing they should point at the feature, which is something the editor
-  will need to let a human set.
+- Leader lines terminate at the centre of the callout's text box rather than at
+  the feature itself. Dragging the balloon moves the bubble, not the leader's
+  anchor point.
+- **A drawing with no text layer produces nothing.** Scanned prints and
+  vector-only exports need OCR, which isn't here.
+- Only the first sheet is exported to SVG; the XLSX covers every sheet.
+
+## Licence
+
+MIT for this project. Vendored pdf.js is Apache 2.0 — see
+`web/vendor/LICENSE-pdfjs`.
